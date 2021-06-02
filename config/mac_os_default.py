@@ -203,21 +203,31 @@ Keyboard._EXECUTION_LAYOUT = _target_layout = {}
 
 def _press_key(in_key: int, out_key: int):
     global _target_layout
-    _target_layout[in_key] = (True, True, lambda _: Keyboard.press_key(in_key, out_key))
+    _target_layout[in_key] = lambda _, _1: Keyboard.press_key(in_key, out_key)
 
 def _press_sequence(in_key: int, should_override_mods: bool, *args: Tuple[int, Set[int]]):
-    _target_layout[in_key] = (True, True, lambda pressed_mods: Keyboard.press_sequence(*(
-        (out_key, out_mods if should_override_mods else (out_mods | pressed_mods))
-        for out_key, out_mods in args)))
+    def f(pressed_mods, _):
+        if should_override_mods:
+            Keyboard.press_sequence(args)
+        else:
+            Keyboard.press_sequence(*((key, mods | pressed_mods) for key, mods in args))
+    
+    global _target_layout
+    _target_layout[in_key] = f
 
 def _press_dual(in_key: int, out_press_mod: int, out_tap_key: int, is_sticky: bool):
+    def f(pressed_mods, is_repetition):
+        if not is_repetition:
+            Keyboard.press_dual(in_key, out_press_mod, out_tap_key, is_sticky)
+        elif out_press_mod in Keyboard._pressed_stickies:
+            Keyboard.press_sequence((out_tap_key, pressed_mods))
+            Keyboard._release_stickies()
+    
     global _target_layout
-    _target_layout[in_key] = (
-        False, False,
-        lambda _: Keyboard.press_dual(in_key, out_press_mod, out_tap_key, is_sticky))
+    _target_layout[in_key] = f
 
 def _press_backspace(in_key: int):
-    def f(pressed_mods):
+    def f(pressed_mods, _):
         if Keyboard.CMD in pressed_mods:
             Keyboard.press_sequence((Keyboard.BACKSPACE, {Keyboard.ALT}))
         elif Keyboard.FN in pressed_mods:
@@ -227,7 +237,7 @@ def _press_backspace(in_key: int):
             Keyboard.press_key(in_key, Keyboard.BACKSPACE)
     
     global _target_layout
-    _target_layout[in_key] = (True, True, f)
+    _target_layout[in_key] = f
 
 _press_dual(Keyboard.SPACE, Keyboard.SHIFT, Keyboard.SPACE, True)
 _press_dual(Keyboard.SHIFT, Keyboard.CMD, Keyboard.ESC, True)
