@@ -46,22 +46,22 @@ class Ui:
     GRAVE = ONE = TWO = THREE = FOUR = FIVE = SIX = SEVEN = EIGHT = NINE = ZERO = DASH = int(-1)
     EQUAL = Q = W = E = R = T = Y = U = I = O = P = LEFT_SQUARE = RIGHT_SQUARE = int(-1)
     BACK_SLASH = A = S = D = F = G = H = J = K = L = SEMICOLON = APOSTROPHE = Z = X = int(-1)
-    C = V = B = N = M = COMMA = DOT = FORWARD_SLASH = ALT = ALT_R = BACKSPACE = int(-1)
-    CAPS_LOCK = CMD = CMD_R = CTRL = CTRL_R = DELETE = DOWN = END = ENTER = ESC = F1 = int(-1)
-    F2 = F3 = F4 = F5 = F6 = F7 = F8 = F9 = F10 = F11 = F12 = HOME = LEFT = PAGE_DOWN = int(-1)
-    PAGE_UP = RIGHT = SHIFT = SHIFT_R = SPACE = TAB = UP = int(-1)
+    C = V = B = N = M = COMMA = DOT = SLASH = ALT = ALT_R = BACKSPACE = CAPS_LOCK = int(-1)
+    CMD = CMD_R = CTRL = CTRL_R = DELETE = DOWN = END = ENTER = ESC = F1 = F2 = F3 = int(-1)
+    F4 = F5 = F6 = F7 = F8 = F9 = F10 = F11 = F12 = HOME = LEFT = PAGE_DOWN = PAGE_UP = int(-1)
+    RIGHT = SHIFT = SHIFT_R = SPACE = TAB = UP = int(-1)
     _IGNORED_KEYS: Set[int] = None
     # mods -> (in_key -> (out_key, should_press_shift))
-    _NORMAL_LAYOUT: Tuple[Dict[int, Tuple[int, bool]]] = None
+    _CHARACTER_LAYOUT: Tuple[Dict[int, Tuple[int, bool]]] = None
     _SHIFT_LOCKED_KEYS: Set[int] = None
-    # in_key -> func(pressed_mods, is_repetition)
-    _EXECUTION_LAYOUT: Dict[int, Callable[[Set[int], bool], None]] = None
+    # in_key -> func(is_repetition)
+    _EXECUTION_LAYOUT: Dict[int, Callable[[bool], None]] = None
     _KEY_MASK = -1
     _MIN_STICKY_TRIGGER_DURATION = math.nan
     _MAX_STICKY_TRIGGER_DURATION = math.nan
     _STICKY_DURATION = math.nan
-    # in_key -> func(pressed_mods, is_repetition)
-    _FUNCTION_LAYOUT: Dict[int, Callable[[Set[int], bool], None]] = None
+    # in_key -> func(is_repetition)
+    _FUNCTION_LAYOUT: Dict[int, Callable[[bool], None]] = None
     _MAX_DOUBLE_CLICK_INTERVAL = math.nan
     # Config end
     FN = 0x100
@@ -119,7 +119,7 @@ class Ui:
         in_shift = Ui.SHIFT in Ui.pressed_mods
         if Ui.shift_lock and in_key in Ui._SHIFT_LOCKED_KEYS:
             in_shift = not in_shift
-        out_key, out_shift = Ui._NORMAL_LAYOUT[in_shift][in_key]
+        out_key, out_shift = Ui._CHARACTER_LAYOUT[in_shift][in_key]
         Ui.press_combo(out_key, {Ui.SHIFT} if out_shift else set())
         Ui._record_pressed_key(in_key, out_key, -1, False)
         Ui.release_stickies()
@@ -129,9 +129,9 @@ class Ui:
         Ui._pressed_count_by_mod[out_press_mod] += 1
         Ui.press_key(in_key, out_press_mod, out_tap_key, is_sticky, False)
     
-    def press_sequence(*args: Tuple[int, Set[int]]):
+    def press_sequence(*sequence: Tuple[int, Set[int]]):
         Ui.release_stickies()
-        for out_key, out_mods in args:
+        for out_key, out_mods in sequence:
             Ui.press_combo(out_key, out_mods)
             Ui.touch_key(False, out_key)
     
@@ -219,8 +219,8 @@ class Ui:
             # Modifier, function, or other special key
             active_layout = (Ui._EXECUTION_LAYOUT
                              if in_key in Ui._EXECUTION_LAYOUT else Ui._FUNCTION_LAYOUT)
-            active_layout[in_key](Ui.pressed_mods, is_repetition)
-        elif in_key in Ui._NORMAL_LAYOUT[0] and not (Ui.pressed_mods - {Ui.SHIFT}):
+            active_layout[in_key](is_repetition)
+        elif in_key in Ui._CHARACTER_LAYOUT[0] and not (Ui.pressed_mods - {Ui.SHIFT}):
             # Character
             Ui.press_char(in_key)
         else:

@@ -44,7 +44,7 @@ Ui.K = 0x28
 Ui.SEMICOLON = 0x29
 Ui.BACK_SLASH = 0x2a
 Ui.COMMA = 0x2b
-Ui.FORWARD_SLASH = 0x2c
+Ui.SLASH = 0x2c
 Ui.N = 0x2d
 Ui.M = 0x2e
 Ui.DOT = 0x2f
@@ -53,7 +53,7 @@ Ui.GRAVE = 0x32
 ## NORMAL LAYOUT ###############################################################################
 
 # in_key -> (out_key, should_press_shift)
-Ui._NORMAL_LAYOUT = (
+Ui._CHARACTER_LAYOUT = (
     # Not shifted
     {
         Ui.GRAVE: (Ui.THREE, True),
@@ -79,7 +79,7 @@ Ui._NORMAL_LAYOUT = (
         Ui.I: (Ui.C, False),
         Ui.O: (Ui.R, False),
         Ui.P: (Ui.L, False),
-        Ui.LEFT_SQUARE: (Ui.FORWARD_SLASH, False),
+        Ui.LEFT_SQUARE: (Ui.SLASH, False),
         Ui.RIGHT_SQUARE: (Ui.BACK_SLASH, False),
         Ui.CAPS_LOCK: (Ui.DASH, False),
         Ui.A: (Ui.A, False),
@@ -102,7 +102,7 @@ Ui._NORMAL_LAYOUT = (
         Ui.M: (Ui.M, False),
         Ui.COMMA: (Ui.W, False),
         Ui.DOT: (Ui.V, False),
-        Ui.FORWARD_SLASH: (Ui.Z, False),
+        Ui.SLASH: (Ui.Z, False),
     },
     # Shifted
     {
@@ -120,7 +120,7 @@ Ui._NORMAL_LAYOUT = (
         Ui.DASH: (Ui.SIX, True),
         Ui.EQUAL: (Ui.GRAVE, True),
         Ui.Q: (Ui.APOSTROPHE, True),
-        Ui.W: (Ui.FORWARD_SLASH, True),
+        Ui.W: (Ui.SLASH, True),
         Ui.E: (Ui.ONE, True),
         Ui.R: (Ui.P, True),
         Ui.T: (Ui.Y, True),
@@ -152,7 +152,7 @@ Ui._NORMAL_LAYOUT = (
         Ui.M: (Ui.M, True),
         Ui.COMMA: (Ui.W, True),
         Ui.DOT: (Ui.V, True),
-        Ui.FORWARD_SLASH: (Ui.Z, True),
+        Ui.SLASH: (Ui.Z, True),
     },
 )
 
@@ -192,7 +192,7 @@ Ui._SHIFT_LOCKED_KEYS = {
     Ui.M,
     Ui.COMMA,
     Ui.DOT,
-    Ui.FORWARD_SLASH,
+    Ui.SLASH,
 }
 
 Ui._IGNORED_KEYS = {x for x in Key if str(x).startswith('Key.media_')}
@@ -203,39 +203,40 @@ Ui._EXECUTION_LAYOUT = _target_layout = {}
 
 def _press_key(in_key: int, out_key: int):
     global _target_layout
-    _target_layout[in_key] = lambda _, _1: Ui.press_key(in_key, out_key)
+    _target_layout[in_key] = lambda _is_repetition: Ui.press_key(in_key, out_key)
 
-def _press_sequence(in_key: int, should_override_mods: bool, *args: Tuple[int, Set[int]]):
-    def f(pressed_mods, _):
-        if should_override_mods: Ui.press_sequence(args)
-        else: Ui.press_sequence(*((key, mods | pressed_mods) for key, mods in args))
+def _press_sequence(in_key: int, should_override_mods: bool, *sequence: Tuple[int, Set[int]]):
+    def f(_is_repetition):
+        if should_override_mods: Ui.press_sequence(sequence)
+        else: Ui.press_sequence(*((key, mods | Ui.pressed_mods) for key, mods in sequence))
     
     global _target_layout
     _target_layout[in_key] = f
 
 def _press_dual(in_key: int, out_press_mod: int, out_tap_key: int, is_sticky: bool):
-    def f(pressed_mods, is_repetition):
+    def f(is_repetition):
         if not is_repetition:
             Ui.press_dual(in_key, out_press_mod, out_tap_key, is_sticky)
         elif out_press_mod in Ui.pressed_stickies:
-            Ui.press_sequence((out_tap_key, pressed_mods))
+            Ui.press_sequence((out_tap_key, Ui.pressed_mods))
     
     global _target_layout
     _target_layout[in_key] = f
 
-def _press_f_key(in_key: int, *args: Tuple[int, Set[int]]):
-    def f(pressed_mods, _):
-        if pressed_mods: Ui.press_key(in_key, in_key)
-        else: Ui.press_sequence(*args)
+def _press_f_key(in_key: int, *sequence: Tuple[int, Set[int]]):
+    def f(_is_repetition):
+        if Ui.pressed_mods: Ui.press_key(in_key, in_key)
+        else: Ui.press_sequence(*sequence)
     
     global _target_layout
     _target_layout[in_key] = f
 
 def _press_backspace(in_key: int):
-    def f(pressed_mods, _):
-        if Ui.CMD in pressed_mods:
+    def f(_is_repetition):
+        del _is_repetition
+        if Ui.CMD in Ui.pressed_mods:
             Ui.press_sequence((Ui.BACKSPACE, {Ui.ALT}))
-        elif Ui.FN in pressed_mods:
+        elif Ui.FN in Ui.pressed_mods:
             Ui.press_sequence((Ui.LEFT, {Ui.SHIFT, Ui.CMD}), (Ui.BACKSPACE, set()))
         else:
             Ui.press_key(in_key, Ui.BACKSPACE)
