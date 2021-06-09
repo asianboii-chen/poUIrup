@@ -1,7 +1,7 @@
 '''
 poUIrup v4.2.0b
 Qianlang Chen
-F 05/28/21
+T 06/08/21
 '''
 from collections import defaultdict
 import math
@@ -42,33 +42,36 @@ class App:
         exec(open('config/mac_os_default.py').read())
 
 class Ui:
-    # Config begin
-    GRAVE = ONE = TWO = THREE = FOUR = FIVE = SIX = SEVEN = EIGHT = NINE = ZERO = DASH = int(-1)
-    EQUAL = Q = W = E = R = T = Y = U = I = O = P = LEFT_SQUARE = RIGHT_SQUARE = int(-1)
-    BACK_SLASH = A = S = D = F = G = H = J = K = L = SEMICOLON = APOSTROPHE = Z = X = int(-1)
-    C = V = B = N = M = COMMA = DOT = SLASH = ALT = ALT_R = BACKSPACE = CAPS_LOCK = int(-1)
-    CMD = CMD_R = CTRL = CTRL_R = DELETE = DOWN = END = ENTER = ESC = F1 = F2 = F3 = int(-1)
-    F4 = F5 = F6 = F7 = F8 = F9 = F10 = F11 = F12 = HOME = LEFT = PAGE_DOWN = PAGE_UP = int(-1)
-    RIGHT = SHIFT = SHIFT_R = SPACE = TAB = UP = int(-1)
-    _IGNORED_KEYS: Set[int] = None
-    # mods -> (in_key -> (out_key, should_press_shift))
-    _CHARACTER_LAYOUT: Tuple[Dict[int, Tuple[int, bool]]] = None
-    _SHIFT_LOCKED_KEYS: Set[int] = None
-    # in_key -> func(is_repetition)
-    _EXECUTION_LAYOUT: Dict[int, Callable[[bool], None]] = None
-    _KEY_MASK = -1
-    _MIN_STICKY_TRIGGER_DURATION = math.nan
-    _MAX_STICKY_TRIGGER_DURATION = math.nan
-    _STICKY_DURATION = math.nan
-    # in_key -> func(is_repetition)
-    _FUNCTION_LAYOUT: Dict[int, Callable[[bool], None]] = None
-    _MAX_DOUBLE_CLICK_INTERVAL = math.nan
-    # Config end
-    FN = 0x100
-    SPEC = 0x101
-    TOG = 0x102
+    NOP = 0x100
+    FN = NOP + 1
+    SPEC = NOP + 2
+    TOG = NOP + 3
     _MODS: Tuple[int] = (Key.shift.value.vk, Key.ctrl.value.vk, Key.alt.value.vk,
                          Key.cmd.value.vk, FN, SPEC, TOG)
+    # Config
+    GRAVE = ONE = TWO = THREE = FOUR = FIVE = SIX = SEVEN = EIGHT = NINE = ZERO = DASH = NOP
+    EQUAL = Q = W = E = R = T = Y = U = I = O = P = LEFT_SQUARE = RIGHT_SQUARE = NOP
+    BACK_SLASH = A = S = D = F = G = H = J = K = L = SEMICOLON = APOSTROPHE = Z = X = C = NOP
+    V = B = N = M = COMMA = DOT = SLASH = ALT = ALT_R = BACKSPACE = CAPS_LOCK = CMD = NOP
+    CMD_R = CTRL = CTRL_R = DELETE = DOWN = END = ENTER = ESC = F1 = F2 = F3 = F4 = F5 = NOP
+    F6 = F7 = F8 = F9 = F10 = F11 = F12 = HOME = LEFT = PAGE_DOWN = PAGE_UP = RIGHT = NOP
+    SHIFT = SHIFT_R = SPACE = TAB = UP = NOP
+    _IGNORED_KEYS: Set[int] = set()
+    _AUTO_REPEAT_KEYS: Set[int] = set()
+    # mods -> (in_key -> (out_key, should_press_shift))
+    _CHARACTER_LAYOUT: Tuple[Dict[int, Tuple[int, bool]]] = ({}, {})
+    _SHIFT_LOCKED_KEYS: Set[int] = set()
+    # in_key -> func(is_repetition)
+    _EXECUTION_LAYOUT: Dict[int, Callable[[bool], None]] = {}
+    _KEY_MASK = NOP
+    _MIN_STICKY_TRIGGER_DURATION = math.inf
+    _MAX_STICKY_TRIGGER_DURATION = math.inf
+    _STICKY_DURATION = 0.
+    _AUTO_REPEAT_DELAY = math.inf
+    _AUTO_REPEAT_INTERVAL = math.inf
+    # in_key -> func(is_repetition)
+    _FUNCTION_LAYOUT: Dict[int, Callable[[bool], None]] = {}
+    _MAX_DOUBLE_CLICK_INTERVAL = 0.
     
     pressed_mods: Set[int] = set()
     pressed_stickies: Set[int] = set()
@@ -79,6 +82,9 @@ class Ui:
     _mouse_listener: mouse.Listener = None
     # is_press -> (time_pressed, out_key, tap_key, is_sticky)
     _pressed_keys: Dict[int, Tuple[float, int, int, bool]] = {}
+    # (in_key, timer)
+    _pressed_auto_repeat: Tuple[int, Timer] = (-1, None)
+    _has_auto_repeat_triggered = False
     # (time_pressed, in_key, out_key)
     _last_key_press: Tuple[float, int, int] = (0., -1, -1)
     _last_mod = -1
@@ -179,8 +185,8 @@ class Ui:
                 level = last_level + 1
             else:
                 level = 1
-            if level == 1: Ui._mouse.press(button)
-            else: Ui._mouse.click(button, level)
+            if App.IS_MAC_OS: Ui._mouse._click = level - 1
+            Ui._mouse.press(button)
             Ui._last_button_press = (curr_time, button, level)
         else:
             Ui._mouse.release(button)
@@ -192,7 +198,7 @@ class Ui:
         Ui._keyboard_listener.stop()
         Ui._mouse_listener.stop()
     
-    def _is_virtual(key): return key >= 0x100
+    def _is_virtual(key): return key >= Ui.NOP
     
     def _get_key(key_obj):
         if key_obj in Ui._IGNORED_KEYS:
@@ -226,9 +232,27 @@ class Ui:
         else:
             # Normal press
             Ui.press_key(in_key, in_key)
+        
+        # Auto-repeat
+        pressed_auto_repeated_key, timer = Ui._pressed_auto_repeat
+        if timer and pressed_auto_repeated_key != in_key:
+            timer.cancel()
+            Ui._pressed_auto_repeat = (-1, None)
+        if in_key in Ui._AUTO_REPEAT_KEYS:
+            timeout = (Ui._AUTO_REPEAT_INTERVAL if timer else Ui._AUTO_REPEAT_DELAY)
+            timer = Timer(timeout, Ui._handle_keyboard_press, (KeyCode.from_vk(in_key),))
+            timer.start()
+            Ui._pressed_auto_repeat = (in_key, timer)
     
     def _handle_keyboard_release(key_obj):
         in_key = Ui._get_key(key_obj)
+        
+        # Auto-repeat
+        pressed_auto_repeated_key, timer = Ui._pressed_auto_repeat
+        if timer and pressed_auto_repeated_key == in_key:
+            timer.cancel()
+            Ui._pressed_auto_repeat = (-1, None)
+        
         if in_key not in Ui._pressed_keys: return
         time_pressed, out_press_key, out_tap_key, is_sticky = Ui._pressed_keys.pop(in_key)
         time_released = time.time()

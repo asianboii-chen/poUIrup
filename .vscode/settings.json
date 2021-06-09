@@ -6,7 +6,10 @@
     "Asianboii's",
     "MEIPASS",
     "Qianlang",
+    "cmath",
     "ctypes",
+    "isnan",
+    "nanj",
     "poUIrup",
     "pyinstaller",
     "xorg"

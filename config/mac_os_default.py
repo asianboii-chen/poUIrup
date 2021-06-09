@@ -199,7 +199,7 @@ Ui._IGNORED_KEYS = {x for x in Key if str(x).startswith('Key.media_')}
 
 ## MODIFIER AND SPECIAL KEY LAYOUT #############################################################
 
-Ui._EXECUTION_LAYOUT = _target_layout = {}
+_target_layout = Ui._EXECUTION_LAYOUT
 
 def _press_key(in_key: int, out_key: int):
     global _target_layout
@@ -233,7 +233,6 @@ def _press_f_key(in_key: int, *sequence: Tuple[int, Set[int]]):
 
 def _press_backspace(in_key: int):
     def f(_is_repetition):
-        del _is_repetition
         if Ui.CMD in Ui.pressed_mods:
             Ui.press_sequence((Ui.BACKSPACE, {Ui.ALT}))
         elif Ui.FN in Ui.pressed_mods:
@@ -252,20 +251,24 @@ _press_dual(Ui.CMD, Ui.ALT, -1, True)
 _press_dual(Ui.CTRL_R, Ui.FN, Ui.TAB, False)
 _press_dual(Ui.DOWN, Ui.FN, Ui.ENTER, True)
 _press_key(Ui.ALT_R, Ui.LEFT)
+Ui._AUTO_REPEAT_KEYS.add(Ui.ALT_R)
 _press_key(Ui.LEFT, Ui.DOWN)
 _press_backspace(Ui.CMD_R)
+Ui._AUTO_REPEAT_KEYS.add(Ui.CMD_R)
 _press_backspace(Ui.BACKSPACE)
 
 _press_f_key(Ui.F1, (Ui.LEFT_SQUARE, {Ui.SHIFT, Ui.CMD}))
 _press_f_key(Ui.F2, (Ui.RIGHT_SQUARE, {Ui.SHIFT, Ui.CMD}))
 _press_f_key(Ui.F3, (Ui.F, {Ui.CMD}), (Ui.G, {Ui.CMD}))
+_press_f_key(Ui.F5, (Ui.R, {Ui.CMD}), (Ui.GRAVE, {Ui.CTRL}), (Ui.F5, {}))
+_press_f_key(Ui.F9, (Ui.GRAVE, {Ui.CTRL}), (Ui.F9, {}))
 
 # AKA modifier cancellation key, the key pressed to pretend modifiers aren't used for a sticky
 Ui._KEY_MASK = Ui.CMD_R
 
 ## FUNCTION LAYOUT #############################################################################
 
-Ui._FUNCTION_LAYOUT = _target_layout = {}
+_target_layout = Ui._FUNCTION_LAYOUT
 
 _press_sequence(Ui.A, False, (Ui.LEFT, {Ui.CMD}))
 _press_sequence(Ui.G, False, (Ui.RIGHT, {Ui.CMD}))
@@ -276,9 +279,13 @@ _press_key(Ui.F, Ui.RIGHT)
 _press_sequence(Ui.W, False, (Ui.LEFT, {Ui.ALT}))
 _press_sequence(Ui.R, False, (Ui.RIGHT, {Ui.ALT}))
 
-## TIMING ######################################################################################
+_press_sequence(Ui.UP, False)
+
+## NUMERICAL ###################################################################################
 
 Ui._MIN_STICKY_TRIGGER_DURATION = .125
 Ui._MAX_STICKY_TRIGGER_DURATION = .625
 Ui._STICKY_DURATION = 1.
+Ui._AUTO_REPEAT_DELAY = .5
+Ui._AUTO_REPEAT_INTERVAL = .03125
 Ui._MAX_DOUBLE_CLICK_INTERVAL = .5
