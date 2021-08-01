@@ -223,10 +223,11 @@ def _press_dual(in_key: int, out_press_mod: int, out_tap_key: int, is_sticky: bo
     global _target_layout
     _target_layout[in_key] = f
 
-def _press_f_key(in_key: int, *sequence: Tuple[int, Set[int]]):
+def _press_f_key(in_key: int, default_sequence: Tuple[Tuple[int, Set[int]]],
+                 *specs: Tuple[Tuple[str], Tuple[Tuple[int, Set[int]]]]):
     def f(_is_repetition):
         if Ui.pressed_mods: Ui.press_key(in_key, in_key)
-        else: Ui.press_sequence(*sequence)
+        else: Ui.press_window_specific_sequence(default_sequence, *specs)
     
     global _target_layout
     _target_layout[in_key] = f
@@ -257,11 +258,30 @@ _press_backspace(Ui.CMD_R)
 Ui._AUTO_REPEAT_KEYS.add(Ui.CMD_R)
 _press_backspace(Ui.BACKSPACE)
 
-_press_f_key(Ui.F1, (Ui.LEFT_SQUARE, {Ui.SHIFT, Ui.CMD}))
-_press_f_key(Ui.F2, (Ui.RIGHT_SQUARE, {Ui.SHIFT, Ui.CMD}))
-_press_f_key(Ui.F3, (Ui.F, {Ui.CMD}), (Ui.G, {Ui.CMD}))
-_press_f_key(Ui.F5, (Ui.R, {Ui.CMD}), (Ui.GRAVE, {Ui.CTRL}), (Ui.F5, {}))
-_press_f_key(Ui.F9, (Ui.GRAVE, {Ui.CTRL}), (Ui.F9, {}))
+_press_f_key(
+    Ui.F1,
+    ((Ui.LEFT_SQUARE, {Ui.SHIFT, Ui.CMD}),),
+)
+_press_f_key(
+    Ui.F2,
+    ((Ui.RIGHT_SQUARE, {Ui.SHIFT, Ui.CMD}),),
+)
+_press_f_key(
+    Ui.F3,
+    ((Ui.F, {Ui.CMD}), (Ui.G, {Ui.CMD})),
+)
+_press_f_key(
+    Ui.F5,
+    ((Ui.R, {Ui.CMD}), (Ui.GRAVE, {Ui.CTRL}), (Ui.F5, {})),
+)
+_press_f_key(
+    Ui.F6,
+    ((Ui.F4, {Ui.CTRL}),),
+)
+_press_f_key(
+    Ui.F8,
+    ((Ui.GRAVE, {Ui.CTRL}), (Ui.F8, {})),
+)
 
 # AKA modifier cancellation key, the key pressed to pretend modifiers aren't used for a sticky
 Ui._KEY_MASK = Ui.CMD_R
@@ -286,6 +306,6 @@ _press_sequence(Ui.UP, False)
 Ui._MIN_STICKY_TRIGGER_DURATION = .125
 Ui._MAX_STICKY_TRIGGER_DURATION = .625
 Ui._STICKY_DURATION = 1.
-Ui._AUTO_REPEAT_DELAY = .5
+Ui._AUTO_REPEAT_DELAY = .4375
 Ui._AUTO_REPEAT_INTERVAL = .03125
-Ui._MAX_DOUBLE_CLICK_INTERVAL = .5
+Ui._MAX_DOUBLE_CLICK_INTERVAL = .375

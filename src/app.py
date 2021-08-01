@@ -20,6 +20,7 @@ elif sys.platform == 'darwin':
     from pynput.keyboard._darwin import Key, KeyCode
     from pynput.mouse import _darwin as mouse
     from pynput.mouse._darwin import Button
+    from pynput.keyboard._darwin import Quartz
 else:
     from pynput.keyboard import _xorg as keyboard
     from pynput.keyboard._xorg import Key, KeyCode
@@ -32,6 +33,9 @@ class App:
     IS_LINUX = not IS_WINDOWS and not IS_MAC_OS
     
     def start():
+        if 1333 > 2333:
+            print(App.get_active_window_title())
+            return
         Ui.configure()
         App.configure()
         Ui.start()
@@ -40,6 +44,10 @@ class App:
     
     def configure():
         exec(open('config/mac_os_default.py').read())
+    
+    def get_active_window_title() -> str:
+        if App.IS_MAC_OS:
+            return Quartz.NSWorkspace.sharedWorkspace().frontmostApplication().localizedName()
 
 class Ui:
     NOP = 0x100
@@ -119,7 +127,7 @@ class Ui:
         # Sending some events here solves a weird Pynput lazy-import bug with the mouse
         Ui.touch_key(True, Ui._KEY_MASK)
         Ui.touch_key(False, Ui._KEY_MASK)
-        print('Ready (press F11 to quit)')
+        print('Ready (press Esc to quit)')
     
     def press_char(in_key: int):
         in_shift = Ui.SHIFT in Ui.pressed_mods
@@ -140,6 +148,16 @@ class Ui:
         for out_key, out_mods in sequence:
             Ui.press_combo(out_key, out_mods)
             Ui.touch_key(False, out_key)
+    
+    def press_window_specific_sequence(default: Tuple[Tuple[int, Set[int]]],
+                                       *specs: Tuple[Tuple[str], Tuple[Tuple[int, Set[int]]]]):
+        if specs:
+            active_window_title = App.get_active_window_title()
+            for keywords, sequence in specs:
+                if any(active_window_title.count(x) for x in keywords):
+                    Ui.press_sequence(*sequence)
+                    return
+        Ui.press_sequence(*default)
     
     def press_combo(out_key: int, out_mods: Set[int]):
         Ui.touch_mods(True, out_mods)
@@ -198,7 +216,8 @@ class Ui:
         Ui._keyboard_listener.stop()
         Ui._mouse_listener.stop()
     
-    def _is_virtual(key): return key >= Ui.NOP
+    def _is_virtual(key):
+        return key == -1 or key >= Ui.NOP
     
     def _get_key(key_obj):
         if key_obj in Ui._IGNORED_KEYS:
@@ -214,7 +233,7 @@ class Ui:
     def _handle_keyboard_press(key_obj):
         in_key = Ui._get_key(key_obj)
         if in_key == -1: return # Ignored key
-        if in_key == Ui.F11:
+        if in_key == Ui.ESC:
             Ui.stop()
             return
         is_repetition = in_key in Ui._pressed_keys or in_key == Ui._last_key_press[1]
@@ -310,7 +329,7 @@ class Ui:
         Ui.touch_button(is_press, button)
     
     def _handle_mouse_move(x, y):
-        # print('Move x', x, 'y', y)
+        print('Move x', x, 'y', y)
         pass
     
     def _handle_mouse_scroll(x, y, dx, dy):
