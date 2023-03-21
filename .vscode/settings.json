@@ -1,0 +1,6 @@
+{
+  "cSpell.words": ["PoUIrup", "the-chenergy"],
+  "code-runner.executorMapByGlob": {
+    "*.go": "true $dir; go run main.go"
+  }
+}
