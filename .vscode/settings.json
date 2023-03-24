@@ -1,6 +1,6 @@
 {
   "cSpell.words": ["PoUIrup", "the-chenergy"],
   "code-runner.executorMapByGlob": {
-    //
+    "*.cc": "true $dir; [[ -f makefile ]] && make || g++ -std=gnu++20 *.cc && ./a.out"
   }
 }
