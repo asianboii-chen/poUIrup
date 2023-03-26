@@ -1,6 +1,4 @@
 {
-  "cSpell.words": ["FLTK", "PoUIrup", "the-chenergy"],
-  "code-runner.executorMapByGlob": {
-    "*.cc": "true $dir; if [[ -f makefile ]]; then make; else g++ -std=gnu++20 *.cc; fi && ./a.out"
-  }
+  "cSpell.words": ["PoUIrup", "the-chenergy"],
+  "code-runner.executorMapByGlob": {}
 }
