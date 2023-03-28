@@ -42,10 +42,13 @@ def create(handler: Handler) -> Context:
         menu.Append(MENU_ITEM_EXIT, 'Exit')
 
         def handle_event(event: wx.CommandEvent) -> None:
-            nonlocal handler
+            nonlocal indicator, handler
             event_id = event.GetId()
             if event_id == MENU_ITEM_TOGGLE:
-                print('Clicked on "toggle" (not yet implemented)')
+                if indicator.IsShown():
+                    indicator.Hide()
+                else:
+                    indicator.Show()
             elif event_id == MENU_ITEM_EXIT:
                 handler.on_menu_click_exit()
 
@@ -63,3 +66,7 @@ def process(context: Context) -> None:
 
 def request_show_indicator(context: Context) -> None:
     wx.CallAfter(context.indicator.Show)
+
+
+def request_hide_indicator(context: Context) -> None:
+    wx.CallAfter(context.indicator.Hide)

@@ -1,4 +1,5 @@
 import gui
+import util
 
 import threading
 import time
@@ -7,11 +8,13 @@ import time
 def main() -> None:
     running = True
 
-    def handle_menu_click_exit() -> None:
+    def exit_app():
         nonlocal running
         running = False
 
-    gui_context = gui.create(gui.Handler(handle_menu_click_exit))
+    util.ensure_single_instance(on_new_instance_start=exit_app)
+
+    gui_context = gui.create(gui.Handler(on_menu_click_exit=exit_app))
 
     def show_indicator_after_delay() -> None:
         time.sleep(2)

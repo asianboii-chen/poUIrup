@@ -1,6 +1,12 @@
 {
-  "cSpell.words": ["PoUIrup", "the-chenergy"],
+  "cSpell.words": [
+    "getpid",
+    "PoUIrup",
+    "SIGTERM",
+    "STATUSITEM",
+    "the-chenergy"
+  ],
   "code-runner.executorMapByGlob": {
-    "*.py": "pythonw"
+    "*.py": "true $dir; conda activate pouirup && pythonw -u source/main.py &"
   }
 }
