@@ -1,4 +1,6 @@
 {
   "cSpell.words": ["PoUIrup", "the-chenergy"],
-  "code-runner.executorMapByGlob": {}
+  "code-runner.executorMapByGlob": {
+    "*.py": "pythonw"
+  }
 }
