@@ -2,6 +2,7 @@ name: pouirup
 channels:
   - defaults
 dependencies:
+  - ipykernel
   - pyobjc-framework-quartz
   - python=3.10
   - wxpython
