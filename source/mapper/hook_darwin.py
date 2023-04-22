@@ -1,7 +1,6 @@
-import importlib
-import typing
+import Quartz
 
-Quartz = importlib.import_module('Quartz')
+import typing
 
 
 class Context(typing.NamedTuple):
@@ -9,7 +8,9 @@ class Context(typing.NamedTuple):
 
 
 def create() -> Context:
-    def handle_native_event(proxy, event_type, event, user_data):
+    def handle_native_event(proxy: Quartz.CGEventTapProxy, event_type: int,
+                            event: Quartz.CGEventRef,
+                            user_data: None) -> Quartz.CGEventRef:
         EVENT_TYPE_CONSTANT_NAMES = {
             1: 'NSEventTypeLeftMouseDown',
             2: 'NSEventTypeLeftMouseUp',
