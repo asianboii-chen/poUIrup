@@ -1,8 +1,6 @@
 import gui
+import mapper
 import util
-
-import threading
-import time
 
 
 def main() -> None:
@@ -14,17 +12,12 @@ def main() -> None:
 
     util.ensure_single_instance(on_new_instance_start=exit_app)
 
+    mapper_context = mapper.create()
     gui_context = gui.create(gui.Handler(on_menu_click_exit=exit_app))
-
-    def show_indicator_after_delay() -> None:
-        time.sleep(2)
-        gui.request_show_indicator(gui_context)
-
-    threading.Thread(target=show_indicator_after_delay).start()
 
     while running:
         gui.process(gui_context)
-        time.sleep(1 / 60)  # Handle UI events here
+        mapper.process(mapper_context)
 
 
 if __name__ == '__main__':
