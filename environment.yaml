@@ -3,7 +3,10 @@ channels:
   - defaults
 dependencies:
   - ipykernel
-  - pyobjc-framework-quartz
-  - python=3.10
-  - wxpython
+  - python=3.11
   - yapf
+
+  - pip
+  - pip:
+      - pyobjc-framework-quartz
+      - wxpython

@@ -7,6 +7,6 @@
     "the-chenergy"
   ],
   "code-runner.executorMapByGlob": {
-    "*.py": "true $dir; conda activate pouirup && pythonw -u source/main.py &"
+    "*.py": "true $dir; conda activate pouirup && python -u source/main.py &"
   }
 }

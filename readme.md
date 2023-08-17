@@ -12,7 +12,7 @@ For now, run it the programmer's way:
 git clone <this_repo>
 cd <this_repo>
 conda env create -f environment.yaml
-pythonw source/main.py &
+python source/main.py &
 ```
 
 ### Development
