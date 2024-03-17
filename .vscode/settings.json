@@ -1,12 +1,14 @@
 {
   "cSpell.words": [
+    "Exposé",
     "getpid",
     "PoUIrup",
     "SIGTERM",
     "STATUSITEM",
-    "the-chenergy"
+    "the-chenergy",
+    "trackpad"
   ],
   "code-runner.executorMapByGlob": {
-    "*.py": "true $dir; conda activate pouirup && python -u source/main.py &"
+    "*.py": "conda activate pouirup && python -u source/main.py 2>&1 | tee ~/Desktop/pouirup_out_err.txt & # $fileName"
   }
 }
