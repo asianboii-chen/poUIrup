@@ -219,7 +219,7 @@ _NS_EVENT_TYPE_CONSTANT_NAMES = {
 
 @dataclasses.dataclass
 class AutoRepeatState:
-    auto_repeating_key: KeyId
+    auto_repeating_key: KeyId | None
     prev_key_press_event_time: float
     has_started_repeating: bool
 
@@ -233,15 +233,16 @@ class ClickLevelState:
 
 @dataclasses.dataclass
 class State:
+    is_active: bool
     event_tap: Quartz.NSMachPort | None
 
-    # macOS natively remembers its modifier state, regardless of whether the modifiers' key-press events (sent by the system with type NSEventTypeFlagsChanged) were suppressed. This field remembers which flags are actually unsuppressed, meaning they're active from the user's perspective after knowing which key events they suppressed or emulated.
+    # macOS natively remembers its modifier state, regardless of whether the modifiers' key press events (sent by the system with type NSEventTypeFlagsChanged) were suppressed. This field remembers which flags are actually unsuppressed, meaning they're active from the user's perspective after knowing which key events they suppressed or emulated.
     unsuppressed_flags: int
 
     is_caps_lock_natively_pressed: bool
     was_caps_lock_native_press_suppressed: bool
 
-    auto_repeat_state: AutoRepeatState | None
+    auto_repeat_state: AutoRepeatState
     click_level_state: ClickLevelState
 
 
@@ -257,12 +258,10 @@ def _get_key_from_event(
 def _terminate_auto_repeat_by_new_keyboard_event_if_needed(
     state: State, event_target_key: KeyId, is_press_event: bool
 ) -> None:
-    if state.auto_repeat_state is None:
-        return
     if (
-        event_target_key != state.auto_repeat_state.auto_repeating_key
-    ) == is_press_event:
-        state.auto_repeat_state = None
+        event_target_key == state.auto_repeat_state.auto_repeating_key
+    ) != is_press_event:
+        state.auto_repeat_state.auto_repeating_key = None
 
 
 def _get_cursor_position_from_event(
@@ -325,10 +324,12 @@ def _handle_native_event(
     if event_type != Quartz.NSEventTypeFlagsChanged:
         Quartz.CGEventSetFlags(event, state.unsuppressed_flags)
 
+    if event_type == Quartz.kCGEventTapDisabledByUserInput:
+        return event
+
     if event_type == Quartz.kCGEventTapDisabledByTimeout:
-        # This is apparently an internal bug that the tap disables itself when you pop up the taskbar icon menu and hide it.
         Quartz.CGEventTapEnable(state.event_tap, True)
-        return None
+        return event
 
     if event_type == Quartz.NSEventTypeSystemDefined:
         ns_event = Quartz.NSEvent.eventWithCGEvent_(event)
@@ -337,7 +338,7 @@ def _handle_native_event(
         data2: int = ns_event.data2()
 
         if event_subtype == 7:
-            # A rather odd and extraneous event for mouse button press or release.
+            # An extraneous event coming after a mouse button press or release.
             return event
 
         if event_subtype == 211:
@@ -401,14 +402,16 @@ def _handle_native_event(
             return event
 
         util.log_error(
-            f"Receiving unsupported system event with subtype {ns_event.subtype()}, data1 {ns_event.data1()}, and data2 {ns_event.data2()}."
+            f"Receiving unsupported system event with subtype {event_subtype}, data1 {data1}, and data2 {data2}."
         )
         return event
 
     if event_type == Quartz.NSEventTypeKeyDown:
         code, key = _get_key_from_event(event)
         if key is None:
-            util.log_error(f"Pressing unsupported key code {code}.")
+            util.log_error(
+                f"Receiving key press event with unsupported key code {code}."
+            )
             return event
 
         is_native_repeat = bool(
@@ -430,7 +433,9 @@ def _handle_native_event(
     if event_type == Quartz.NSEventTypeKeyUp:
         code, key = _get_key_from_event(event)
         if key is None:
-            util.log_error(f"Releasing unsupported key code {code}.")
+            util.log_error(
+                f"Receiving key release event with unsupported key code {code}."
+            )
             return event
 
         should_suppress = handler.handle_key_releasing(key)
@@ -451,7 +456,7 @@ def _handle_native_event(
         code, key = _get_key_from_event(event)
         if key is None:
             util.log_error(
-                f"Flags changed into {bin(curr_flags)} (associated with key code {code}), handling which is not yet supported."
+                f"Received flag-change event associated with key code {code} with new flags {bin(curr_flags)}, handling which is not yet supported."
             )
             return event
 
@@ -596,11 +601,16 @@ def _handle_native_event(
 
 def create() -> State:
     return State(
+        is_active=False,
         event_tap=None,
         unsuppressed_flags=0,
         is_caps_lock_natively_pressed=False,
         was_caps_lock_native_press_suppressed=False,
-        auto_repeat_state=None,
+        auto_repeat_state=AutoRepeatState(
+            auto_repeating_key=None,
+            prev_key_press_event_time=-math.inf,
+            has_started_repeating=False,
+        ),
         click_level_state=ClickLevelState(
             prev_mouse_button_pressed=None,
             prev_mouse_button_press_event_time=-math.inf,
@@ -609,13 +619,13 @@ def create() -> State:
     )
 
 
-def activate(state: State, handler: Handler) -> None:
-    state.unsuppressed_flags = Quartz.CGEventSourceFlagsState(
-        Quartz.kCGEventSourceStateHIDSystemState
-    )
+def register_handler(state: State, handler: Handler) -> None:
+    # TODO Find out what the noticeable differences are between the following two tap locations and which one works better.
+    tap_location = Quartz.kCGSessionEventTap
+    # tap_location = Quartz.kCGHIDEventTap  # spell-checker: disable-line
 
     state.event_tap = Quartz.CGEventTapCreate(
-        Quartz.kCGHIDEventTap,  # spell-checker: disable-line
+        tap_location,
         Quartz.kCGHeadInsertEventTap,
         Quartz.kCGEventTapOptionDefault,
         Quartz.kCGEventMaskForAllEvents,
@@ -625,15 +635,33 @@ def activate(state: State, handler: Handler) -> None:
     loop_source = Quartz.CFMachPortCreateRunLoopSource(None, state.event_tap, 0)
     event_loop = Quartz.CFRunLoopGetCurrent()
     Quartz.CFRunLoopAddSource(event_loop, loop_source, Quartz.kCFRunLoopDefaultMode)
+
+
+def activate(state: State) -> None:
+    if state.is_active:
+        return
+    state.is_active = True
+
+    state.unsuppressed_flags = Quartz.CGEventSourceFlagsState(
+        Quartz.kCGEventSourceStateHIDSystemState
+    )
     Quartz.CGEventTapEnable(state.event_tap, True)
 
 
+def deactivate(state: State) -> None:
+    if not state.is_active:
+        return
+    state.is_active = False
+
+    Quartz.CGEventTapEnable(state.event_tap, False)
+
+
 def process(state: State) -> None:
-    RUN_LOOP_MAX_DURATION_SECS = 1 / 60
-    run_loop_duration_secs = RUN_LOOP_MAX_DURATION_SECS
+    RUN_LOOP_MAX_DURATION_SECONDS = 1 / 60
+    run_loop_duration_seconds = RUN_LOOP_MAX_DURATION_SECONDS
 
     auto_repeat_state = state.auto_repeat_state
-    if auto_repeat_state is not None:
+    if auto_repeat_state.auto_repeating_key is not None:
         if auto_repeat_state.has_started_repeating:
             target_interval = Quartz.NSEvent.keyRepeatInterval()
         else:
@@ -641,8 +669,8 @@ def process(state: State) -> None:
         curr_time = time.time()
         elapsed = curr_time - auto_repeat_state.prev_key_press_event_time
         if elapsed < target_interval:
-            run_loop_duration_secs = min(
-                target_interval - elapsed, RUN_LOOP_MAX_DURATION_SECS
+            run_loop_duration_seconds = min(
+                target_interval - elapsed, RUN_LOOP_MAX_DURATION_SECONDS
             )
         else:
             auto_repeat_state.has_started_repeating = True
@@ -651,7 +679,7 @@ def process(state: State) -> None:
 
     return_after_handling = True
     Quartz.CFRunLoopRunInMode(
-        Quartz.kCFRunLoopDefaultMode, run_loop_duration_secs, return_after_handling
+        Quartz.kCFRunLoopDefaultMode, run_loop_duration_seconds, return_after_handling
     )
 
 

@@ -101,8 +101,8 @@ def _handle_hook_key_releasing(
     return False
 
 
-_MIN_GESTURE_UPDATE_INTERVAL_SECS = 1 / 24
-_MIN_SPEED_TO_RECOGNIZE_GESTURE_IN_PER_SEC = 3
+_MIN_GESTURE_UPDATE_INTERVAL_SECONDS = 1 / 24
+_MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND = 3
 
 
 def _handle_hook_mouse_button_pressing(
@@ -110,9 +110,9 @@ def _handle_hook_mouse_button_pressing(
     hook_state: hook.State,
     gesture_state: GestureState,
     button: hook.ButtonId,
-    click_count: int,
+    click_level: int,
 ) -> hook.ShouldSuppressEventFlag:
-    if button == "right_button":
+    if button == "right_button" and click_level == 1:
         if gesture_state.gesture_source is None:
             mouse_state.is_making_gesture = True
             mouse_state.recorded_position = hook.get_cursor_position()
@@ -128,9 +128,9 @@ def _handle_hook_mouse_button_releasing(
     hook_state: hook.State,
     gesture_state: GestureState,
     button: hook.ButtonId,
-    click_count: int,
+    click_level: int,
 ) -> hook.ShouldSuppressEventFlag:
-    if button == "right_button":
+    if button == "right_button" and click_level == 1:
         did_make_gesture = False
         if mouse_state.is_making_gesture:
             if len(gesture_state.gesture_recognized) > 0:
@@ -158,7 +158,7 @@ def _update_gesture_from_mouse(
 ) -> None:
     curr_time = time.time()
     interval = curr_time - mouse_state.recorded_time
-    if interval < _MIN_GESTURE_UPDATE_INTERVAL_SECS:
+    if interval < _MIN_GESTURE_UPDATE_INTERVAL_SECONDS:
         return
 
     prev_pos = mouse_state.recorded_position
@@ -170,7 +170,7 @@ def _update_gesture_from_mouse(
     displacement_pixels = new_cursor_position - prev_pos
     displacement_inches = displacement_pixels / PIXELS_PER_INCH_MOVED
     speed = abs(displacement_inches) / interval
-    if speed < _MIN_SPEED_TO_RECOGNIZE_GESTURE_IN_PER_SEC:
+    if speed < _MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND:
         return
 
     _update_gesture_from_new_displacement(gesture_state, displacement_inches)
@@ -234,7 +234,7 @@ def _update_gesture_from_trackpad(
 ) -> None:
     curr_time = time.time()
     interval = curr_time - trackpad_state.prev_recorded_time
-    if interval < _MIN_GESTURE_UPDATE_INTERVAL_SECS:
+    if interval < _MIN_GESTURE_UPDATE_INTERVAL_SECONDS:
         return
 
     prev_pos = trackpad_state.prev_recorded_finger_positions
@@ -250,7 +250,7 @@ def _update_gesture_from_trackpad(
                 continue
 
             speed = abs(curr_pos[i] - prev_pos[i]) / interval
-            if speed >= _MIN_SPEED_TO_RECOGNIZE_GESTURE_IN_PER_SEC:
+            if speed >= _MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND:
                 fingers.add(i)
 
         if len(fingers) < _MIN_FINGERS_TO_START_GESTURE_FROM_TRACKPAD:
@@ -268,7 +268,7 @@ def _update_gesture_from_trackpad(
 
         displacement = curr_pos[i] - prev_pos[i]
         speed = abs(displacement) / interval
-        if speed < _MIN_SPEED_TO_RECOGNIZE_GESTURE_IN_PER_SEC:
+        if speed < _MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND:
             continue
 
         sum_displacement += displacement
@@ -317,7 +317,23 @@ def _handle_hook_trackpad_finger_positions_updating(
             gesture_state.gesture_source = "trackpad"
 
 
-def stop_running_app(app_state: AppState) -> None:
+def _handle_gui_icon_menu_showing(hook_state: hook.State) -> None:
+    hook.deactivate(hook_state)
+
+
+def _handle_gui_icon_menu_hid(hook_state: hook.State) -> None:
+    hook.activate(hook_state)
+
+
+def _handle_gui_icon_menu_item_exit_clicked(app_state: AppState) -> None:
+    _stop_running_app(app_state)
+
+
+def _handle_new_app_instance_started(app_state: AppState) -> None:
+    _stop_running_app(app_state)
+
+
+def _stop_running_app(app_state: AppState) -> None:
     app_state.is_running = False
 
 
@@ -348,16 +364,15 @@ def main() -> None:
     )
 
     hook_state = hook.create()
-    gui_state = gui.create(
-        gui.Handler(
-            handle_menu_exit_clicked=functools.partial(stop_running_app, app_state)
+    gui_state = gui.create()
+
+    util.ensure_single_instance(
+        handle_new_instance_started=functools.partial(
+            _handle_new_app_instance_started, app_state
         )
     )
 
-    util.ensure_single_instance(
-        handle_new_instance_started=functools.partial(stop_running_app, app_state)
-    )
-    hook.activate(
+    hook.register_handler(
         hook_state,
         hook.Handler(
             handle_key_pressing=functools.partial(
@@ -382,7 +397,7 @@ def main() -> None:
                 _handle_hook_mouse_cursor_moving, mouse_state, gesture_state
             ),
             handle_mouse_wheel_scrolling=functools.partial(
-                _handle_hook_mouse_wheel_scrolling,
+                _handle_hook_mouse_wheel_scrolling
             ),
             handle_trackpad_finger_positions_updating=functools.partial(
                 _handle_hook_trackpad_finger_positions_updating,
@@ -391,14 +406,30 @@ def main() -> None:
             ),
         ),
     )
+    hook.activate(hook_state)
+
+    gui.register_handler(
+        gui_state,
+        gui.Handler(
+            handle_icon_menu_showing=functools.partial(
+                _handle_gui_icon_menu_showing, hook_state
+            ),
+            handle_icon_menu_hid=functools.partial(
+                _handle_gui_icon_menu_hid, hook_state
+            ),
+            handle_icon_menu_item_exit_clicked=functools.partial(
+                _handle_gui_icon_menu_item_exit_clicked, app_state
+            ),
+        ),
+    )
 
     while app_state.is_running:
         hook.process(hook_state)
         gui.process(gui_state)
 
-        MAX_RUN_DURATION_SECS = 30
-        if time.time() - app_state.running_start_time >= MAX_RUN_DURATION_SECS:
-            stop_running_app(app_state)
+        MAX_RUN_DURATION_SECONDS = 30
+        if time.time() - app_state.running_start_time >= MAX_RUN_DURATION_SECONDS:
+            _stop_running_app(app_state)
 
 
 if __name__ == "__main__":

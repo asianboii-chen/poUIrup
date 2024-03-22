@@ -9,6 +9,6 @@
     "trackpad"
   ],
   "code-runner.executorMapByGlob": {
-    "*.py": "conda activate pouirup && python -u source/main.py 2>&1 | tee ~/Desktop/pouirup_out_err.txt & # $fileName"
+    "*.py": "conda activate pouirup && python -u $workspaceRoot/source/main.py 2>&1 | tee $workspaceRoot/playground/log_out_err.txt &"
   }
 }
