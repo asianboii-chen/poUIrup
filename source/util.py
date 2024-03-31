@@ -25,7 +25,7 @@ def ensure_single_instance(
 ) -> None:
     LOCK_PATH = os.path.join(tempfile.gettempdir(), "pouirup.lock")
 
-    def terminate_existing_instance() -> None:
+    def terminate_running_instance_if_exists() -> None:
         if not os.path.exists(LOCK_PATH):
             return
 
@@ -40,10 +40,10 @@ def ensure_single_instance(
         except OSError:
             return
 
-        wait_secs = 0.125
-        while wait_secs <= 2:
-            time.sleep(wait_secs)
-            wait_secs *= 2
+        wait_seconds = 0.125
+        while wait_seconds <= 2:
+            time.sleep(wait_seconds)
+            wait_seconds *= 2
             try:
                 os.kill(running_pid, 0)
             except OSError:
@@ -53,7 +53,7 @@ def ensure_single_instance(
             f"The existing process (PID {running_pid}) took too long to exit."
         )
 
-    terminate_existing_instance()
+    terminate_running_instance_if_exists()
 
     with open(LOCK_PATH, "w") as lock:
         lock.writelines([str(os.getpid())])

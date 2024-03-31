@@ -586,7 +586,7 @@ def _handle_native_event(
         return event
 
     if event_type == Quartz.NSEventTypeMagnify:
-        # Apparently this is what Mission Control and App Exposé internally listen to. Suppress to disable those default behaviors as we'll probably implement mouse gestures to handle them anyway. I haven't found any side effects for doing this yet--luckily pinching and double-tapping zoom features still work just fine with this forced suppression.
+        # HACK Apparently this is what Mission Control and App Exposé internally listen to. Suppress to disable those default behaviors as we'll probably implement mouse gestures to handle them anyway. I haven't found any side effects for doing this yet--luckily pinching and double-tapping zoom features still work just fine with this forced suppression.
         return None
 
     if event_type in _NS_EVENT_TYPE_CONSTANT_NAMES:

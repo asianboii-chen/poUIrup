@@ -42,6 +42,7 @@ class GestureState:
     gesture_recognized: Gesture
     pending_movement: GestureMovement | None
     pending_movement_distance: float
+    is_gesture_paused: bool
 
 
 @dataclasses.dataclass
@@ -51,6 +52,7 @@ class AppState:
 
 
 def _handle_hook_key_pressing(
+    app_state: AppState,
     keyboard_state: KeyboardState,
     hook_state: hook.State,
     key: hook.KeyId,
@@ -68,15 +70,18 @@ def _handle_hook_key_pressing(
         if not is_native_repeat:
             hook.emulate_key_press(hook_state, "caps_lock")
         return True
+    elif key == "f7":
+        hook.emulate_mouse_button_press(hook_state, "left_button")
+        hook.emulate_mouse_button_release(hook_state, "left_button")
+        hook.emulate_mouse_button_press(hook_state, "left_button")
+        hook.emulate_mouse_button_release(hook_state, "left_button")
+        return True
     elif key == "f9":
         if not is_native_repeat:
             hook.emulate_key_press_with_auto_repeat(hook_state, "grave")
         return True
     elif key == "f10":
-        hook.emulate_mouse_button_press(hook_state, "left_button")
-        hook.emulate_mouse_button_release(hook_state, "left_button")
-        hook.emulate_mouse_button_press(hook_state, "left_button")
-        hook.emulate_mouse_button_release(hook_state, "left_button")
+        _stop_running_app(app_state)
         return True
 
     return False
@@ -94,15 +99,18 @@ def _handle_hook_key_releasing(
     elif key == "f6":
         hook.emulate_key_release(hook_state, "caps_lock")
         return True
+    elif key == "f7":
+        return True
     elif key == "f9":
         hook.emulate_key_release(hook_state, "grave")
+        return True
+    elif key == "f10":
         return True
 
     return False
 
 
 _MIN_GESTURE_UPDATE_INTERVAL_SECONDS = 1 / 24
-_MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND = 3
 
 
 def _handle_hook_mouse_button_pressing(
@@ -169,11 +177,8 @@ def _update_gesture_from_mouse(
 
     displacement_pixels = new_cursor_position - prev_pos
     displacement_inches = displacement_pixels / PIXELS_PER_INCH_MOVED
-    speed = abs(displacement_inches) / interval
-    if speed < _MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND:
-        return
 
-    _update_gesture_from_new_displacement(gesture_state, displacement_inches)
+    _update_gesture_from_new_displacement(gesture_state, displacement_inches, interval)
 
 
 def _handle_hook_mouse_cursor_moving(
@@ -196,20 +201,32 @@ def _handle_hook_mouse_wheel_scrolling(
 def _update_gesture_from_new_displacement(
     gesture_state: GestureState,
     new_displacement_inches: complex,
+    time_since_prev_update: float,
 ) -> None:
+    MIN_SPEED_TO_UPDATE_GESTURE_INCHES_PER_SECOND = 3
+
+    speed = abs(new_displacement_inches) / time_since_prev_update
+    util.log("update gesture; speed:", speed)
+    if speed < MIN_SPEED_TO_UPDATE_GESTURE_INCHES_PER_SECOND:
+        if len(gesture_state.gesture_recognized) > 0:
+            gesture_state.is_gesture_paused = True
+        return
+
     direction = (cmath.phase(new_displacement_inches) + math.tau / 8) % math.tau
     movement = ("E", "S", "W", "N")[int(direction / (math.tau / 4))]
 
-    if movement != gesture_state.pending_movement:
+    if gesture_state.is_gesture_paused or movement != gesture_state.pending_movement:
         gesture_state.pending_movement = movement
         gesture_state.pending_movement_distance = 0
 
     gesture_state.pending_movement_distance += abs(new_displacement_inches)
 
-    if (
-        len(gesture_state.gesture_recognized)
-        and movement == gesture_state.gesture_recognized[-1]
-    ):
+    prev_movement = (
+        gesture_state.gesture_recognized[-1]
+        if len(gesture_state.gesture_recognized) > 0
+        else None
+    )
+    if not gesture_state.is_gesture_paused and movement == prev_movement:
         return
 
     MIN_MOVEMENT_DISTANCE_TO_RECOGNIZE_INCHES = 0.25
@@ -219,6 +236,7 @@ def _update_gesture_from_new_displacement(
         >= MIN_MOVEMENT_DISTANCE_TO_RECOGNIZE_INCHES
     ):
         gesture_state.gesture_recognized.append(movement)
+        gesture_state.is_gesture_paused = False
 
 
 def _perform_gestured_action(gesture: Gesture) -> None:
@@ -243,6 +261,8 @@ def _update_gesture_from_trackpad(
     trackpad_state.prev_recorded_time = curr_time
     trackpad_state.prev_recorded_finger_positions = curr_pos
 
+    MIN_FINGER_SPEED_TO_START_GESTURE_INCHES_PER_SECOND = 3
+
     if not trackpad_state.is_making_gesture:
         fingers = set()
         for i in curr_pos:
@@ -250,7 +270,7 @@ def _update_gesture_from_trackpad(
                 continue
 
             speed = abs(curr_pos[i] - prev_pos[i]) / interval
-            if speed >= _MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND:
+            if speed >= MIN_FINGER_SPEED_TO_START_GESTURE_INCHES_PER_SECOND:
                 fingers.add(i)
 
         if len(fingers) < _MIN_FINGERS_TO_START_GESTURE_FROM_TRACKPAD:
@@ -266,19 +286,14 @@ def _update_gesture_from_trackpad(
         if i not in curr_pos or i not in prev_pos:
             continue
 
-        displacement = curr_pos[i] - prev_pos[i]
-        speed = abs(displacement) / interval
-        if speed < _MIN_SPEED_TO_RECOGNIZE_GESTURE_INCHES_PER_SECOND:
-            continue
-
-        sum_displacement += displacement
+        sum_displacement += curr_pos[i] - prev_pos[i]
         fingers_moved += 1
 
     if fingers_moved == 0:
         return
 
     mean_displacement = sum_displacement / fingers_moved
-    _update_gesture_from_new_displacement(gesture_state, mean_displacement)
+    _update_gesture_from_new_displacement(gesture_state, mean_displacement, interval)
 
 
 def _handle_hook_trackpad_finger_positions_updating(
@@ -303,6 +318,7 @@ def _handle_hook_trackpad_finger_positions_updating(
             gesture_state.gesture_source = None
             gesture_state.gesture_recognized.clear()
             gesture_state.pending_movement = None
+            gesture_state.is_gesture_paused = False
 
             return
 
@@ -357,6 +373,7 @@ def main() -> None:
         gesture_recognized=[],
         pending_movement=None,
         pending_movement_distance=0,
+        is_gesture_paused=False,
     )
     app_state = AppState(
         is_running=True,
@@ -376,7 +393,7 @@ def main() -> None:
         hook_state,
         hook.Handler(
             handle_key_pressing=functools.partial(
-                _handle_hook_key_pressing, keyboard_state, hook_state
+                _handle_hook_key_pressing, app_state, keyboard_state, hook_state
             ),
             handle_key_releasing=functools.partial(
                 _handle_hook_key_releasing, keyboard_state, hook_state
