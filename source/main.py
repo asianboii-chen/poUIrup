@@ -4,7 +4,9 @@ import util
 
 import cmath
 import dataclasses
+import datetime
 import functools
+import json
 import math
 import time
 import typing
@@ -46,9 +48,87 @@ class GestureState:
 
 
 @dataclasses.dataclass
+class TrackerState:
+    active_modifiers_by_pressed_key_or_button: dict[
+        hook.KeyId | hook.ButtonId, set[hook.KeyId]
+    ]
+    prev_mouse_wheel_scroll_time: float
+
+
+@dataclasses.dataclass
 class AppState:
     is_running: bool
     running_start_time: float
+
+    tracker_state: TrackerState
+
+
+EventTraceKind = typing.Literal[
+    "key_press",
+    "key_release",
+    "mouse_button_press",
+    "mouse_button_release",
+    "mouse_wheel_scroll",
+    "trackpad_gesture",
+]
+
+
+class EventTrace(typing.TypedDict):
+    protocol: str
+    kind: EventTraceKind
+    timestamp: str
+    app: str
+    window: str
+    modifiers: list[hook.KeyId]
+
+
+class KeyboardEventTrace(EventTrace):
+    key: hook.KeyId
+    is_modifier: bool
+
+
+class MouseButtonEventTrace(EventTrace):
+    button: hook.ButtonId
+    click_level: int
+
+
+class MouseWheelEventTrace(EventTrace):
+    dy: int
+    dx: int
+
+
+@dataclasses.dataclass
+class TrackpadGestureEventTrace(EventTrace):
+    gesture: str
+
+
+def _get_active_modifiers(hook_state: hook.State) -> set[hook.KeyId]:
+    return {
+        modifier
+        for modifier in hook.SUPPORTED_MODIFIERS
+        if hook.check_is_modifier_active(hook_state, modifier)
+    }
+
+
+def _log_event_trace(trace: EventTrace) -> None:
+    print(json.dumps(trace), end=",\n")
+
+
+def _create_event_trace_metadata(
+    hook_state: hook.State,
+    event_kind: EventTraceKind,
+    active_modifiers: set[hook.KeyId],
+) -> EventTrace:
+    active_window_info = hook.get_active_window_info()
+    return EventTrace(
+        # FIXME Change this version number whenever protocol changes.
+        protocol="v1",
+        kind=event_kind,
+        timestamp=datetime.datetime.now().astimezone().isoformat(),
+        app=active_window_info.owner_app_name,
+        window=active_window_info.title or "",
+        modifiers=sorted(active_modifiers),
+    )
 
 
 def _handle_hook_key_pressing(
@@ -58,54 +138,49 @@ def _handle_hook_key_pressing(
     key: hook.KeyId,
     is_native_repeat: bool,
 ) -> hook.ShouldSuppressEventFlag:
-    if key == "f4":
-        if not is_native_repeat:
-            hook.emulate_key_press(hook_state, "shift")
-        return True
-    elif key == "f5":
-        if not is_native_repeat:
-            hook.emulate_key_press_with_auto_repeat(hook_state, "volume_down")
-        return True
-    elif key == "f6":
-        if not is_native_repeat:
-            hook.emulate_key_press(hook_state, "caps_lock")
-        return True
-    elif key == "f7":
-        hook.emulate_mouse_button_press(hook_state, "left_button")
-        hook.emulate_mouse_button_release(hook_state, "left_button")
-        hook.emulate_mouse_button_press(hook_state, "left_button")
-        hook.emulate_mouse_button_release(hook_state, "left_button")
-        return True
-    elif key == "f9":
-        if not is_native_repeat:
-            hook.emulate_key_press_with_auto_repeat(hook_state, "grave")
-        return True
-    elif key == "f10":
-        _stop_running_app(app_state)
-        return True
+    is_repeat = key in app_state.tracker_state.active_modifiers_by_pressed_key_or_button
+    if is_repeat:
+        return False
+
+    active_modifiers = _get_active_modifiers(hook_state)
+    app_state.tracker_state.active_modifiers_by_pressed_key_or_button[key] = (
+        active_modifiers
+    )
+    _log_event_trace(
+        KeyboardEventTrace(
+            **_create_event_trace_metadata(hook_state, "key_press", active_modifiers),
+            key=key,
+            is_modifier=key in hook.MODIFIER_BY_OPTIONALLY_PAIRED_KEY,
+        )
+    )
 
     return False
 
 
 def _handle_hook_key_releasing(
-    keyboard_state: KeyboardState, hook_state: hook.State, key: hook.KeyId
+    app_state: AppState,
+    keyboard_state: KeyboardState,
+    hook_state: hook.State,
+    key: hook.KeyId,
 ) -> hook.ShouldSuppressEventFlag:
-    if key == "f4":
-        hook.emulate_key_release(hook_state, "shift")
-        return True
-    elif key == "f5":
-        hook.emulate_key_release(hook_state, "volume_down")
-        return True
-    elif key == "f6":
-        hook.emulate_key_release(hook_state, "caps_lock")
-        return True
-    elif key == "f7":
-        return True
-    elif key == "f9":
-        hook.emulate_key_release(hook_state, "grave")
-        return True
-    elif key == "f10":
-        return True
+    if key not in app_state.tracker_state.active_modifiers_by_pressed_key_or_button:
+        util.log_error(
+            f'Receiving key release event for "{key}", but it\'s not previously recorded as pressed.'
+        )
+        return False
+
+    prev_active_modifiers = (
+        app_state.tracker_state.active_modifiers_by_pressed_key_or_button.pop(key)
+    )
+    _log_event_trace(
+        KeyboardEventTrace(
+            **_create_event_trace_metadata(
+                hook_state, "key_release", prev_active_modifiers
+            ),
+            key=key,
+            is_modifier=key in hook.MODIFIER_BY_OPTIONALLY_PAIRED_KEY,
+        )
+    )
 
     return False
 
@@ -113,7 +188,11 @@ def _handle_hook_key_releasing(
 _MIN_GESTURE_UPDATE_INTERVAL_SECONDS = 1 / 24
 
 
+_ALLOW_GESTURES_BY_RIGHT_BUTTON = False
+
+
 def _handle_hook_mouse_button_pressing(
+    app_state: AppState,
     mouse_state: MouseState,
     hook_state: hook.State,
     gesture_state: GestureState,
@@ -121,24 +200,43 @@ def _handle_hook_mouse_button_pressing(
     click_level: int,
 ) -> hook.ShouldSuppressEventFlag:
     if button == "right_button" and click_level == 1:
-        if gesture_state.gesture_source is None:
+        if _ALLOW_GESTURES_BY_RIGHT_BUTTON and gesture_state.gesture_source is None:
             mouse_state.is_making_gesture = True
             mouse_state.recorded_position = hook.get_cursor_position()
             mouse_state.recorded_time = time.time()
             gesture_state.gesture_source = "mouse"
             return True
 
+    active_modifiers = _get_active_modifiers(hook_state)
+    app_state.tracker_state.active_modifiers_by_pressed_key_or_button[button] = (
+        active_modifiers
+    )
+    _log_event_trace(
+        MouseButtonEventTrace(
+            **_create_event_trace_metadata(
+                hook_state, "mouse_button_press", active_modifiers
+            ),
+            button=button,
+            click_level=click_level,
+        )
+    )
+
     return False
 
 
 def _handle_hook_mouse_button_releasing(
+    app_state: AppState,
     mouse_state: MouseState,
     hook_state: hook.State,
     gesture_state: GestureState,
     button: hook.ButtonId,
     click_level: int,
 ) -> hook.ShouldSuppressEventFlag:
-    if button == "right_button" and click_level == 1:
+    if (
+        _ALLOW_GESTURES_BY_RIGHT_BUTTON
+        and button == "right_button"
+        and click_level == 1
+    ):
         did_make_gesture = False
         if mouse_state.is_making_gesture:
             if len(gesture_state.gesture_recognized) > 0:
@@ -155,6 +253,25 @@ def _handle_hook_mouse_button_releasing(
             hook.emulate_mouse_button_release(hook_state, "right_button")
 
         return True
+
+    if button not in app_state.tracker_state.active_modifiers_by_pressed_key_or_button:
+        util.log_error(
+            f'Receiving button release event for "{button}", but it\'s not previously recorded as pressed.'
+        )
+        return False
+
+    prev_active_modifiers = (
+        app_state.tracker_state.active_modifiers_by_pressed_key_or_button.pop(button)
+    )
+    _log_event_trace(
+        MouseButtonEventTrace(
+            **_create_event_trace_metadata(
+                hook_state, "mouse_button_release", prev_active_modifiers
+            ),
+            button=button,
+            click_level=click_level,
+        )
+    )
 
     return False
 
@@ -190,11 +307,35 @@ def _handle_hook_mouse_cursor_moving(
         _update_gesture_from_mouse(gesture_state, mouse_state, new_pos)
 
 
+_MIN_MOUSE_WHEEL_SCROLL_TRACK_INTERVAL_SECONDS = 0.125
+
+
 def _handle_hook_mouse_wheel_scrolling(
+    app_state: AppState,
+    hook_state: hook.State,
     scroll_displacement: hook.WheelScrollDisplacementUnits,
     is_continuous: bool,
     is_done_by_momentum: bool,
 ) -> hook.ShouldSuppressEventFlag:
+    if not is_done_by_momentum:
+        curr_time = time.time()
+        interval = curr_time - app_state.tracker_state.prev_mouse_wheel_scroll_time
+        app_state.tracker_state.prev_mouse_wheel_scroll_time = curr_time
+        if interval < _MIN_MOUSE_WHEEL_SCROLL_TRACK_INTERVAL_SECONDS:
+            return False
+
+        dy = scroll_displacement.imag
+        dx = scroll_displacement.real
+        _log_event_trace(
+            MouseWheelEventTrace(
+                **_create_event_trace_metadata(
+                    hook_state, "mouse_wheel_scroll", _get_active_modifiers(hook_state)
+                ),
+                dy=int(dy > 0) - int(dy < 0),
+                dx=int(dx > 0) - int(dx < 0),
+            )
+        )
+
     return False
 
 
@@ -206,7 +347,6 @@ def _update_gesture_from_new_displacement(
     MIN_SPEED_TO_UPDATE_GESTURE_INCHES_PER_SECOND = 3
 
     speed = abs(new_displacement_inches) / time_since_prev_update
-    util.log("update gesture; speed:", speed)
     if speed < MIN_SPEED_TO_UPDATE_GESTURE_INCHES_PER_SECOND:
         if len(gesture_state.gesture_recognized) > 0:
             gesture_state.is_gesture_paused = True
@@ -240,7 +380,7 @@ def _update_gesture_from_new_displacement(
 
 
 def _perform_gestured_action(gesture: Gesture) -> None:
-    util.log("Gesture made:", "".join(gesture))
+    return
 
 
 _MIN_FINGERS_TO_START_GESTURE_FROM_TRACKPAD = 4
@@ -297,6 +437,7 @@ def _update_gesture_from_trackpad(
 
 
 def _handle_hook_trackpad_finger_positions_updating(
+    hook_state: hook.State,
     trackpad_state: TrackpadState,
     gesture_state: GestureState,
     new_finger_positions: dict[hook.FingerId, hook.FingerPositionInches],
@@ -313,6 +454,16 @@ def _handle_hook_trackpad_finger_positions_updating(
         if should_end_gesture:
             if len(gesture_state.gesture_recognized) > 0:
                 _perform_gestured_action(gesture_state.gesture_recognized)
+                _log_event_trace(
+                    TrackpadGestureEventTrace(
+                        **_create_event_trace_metadata(
+                            hook_state,
+                            "trackpad_gesture",
+                            _get_active_modifiers(hook_state),
+                        ),
+                        gesture="".join(gesture_state.gesture_recognized),
+                    )
+                )
 
             trackpad_state.is_making_gesture = False
             gesture_state.gesture_source = None
@@ -378,6 +529,10 @@ def main() -> None:
     app_state = AppState(
         is_running=True,
         running_start_time=time.time(),
+        tracker_state=TrackerState(
+            active_modifiers_by_pressed_key_or_button={},
+            prev_mouse_wheel_scroll_time=-math.inf,
+        ),
     )
 
     hook_state = hook.create()
@@ -391,21 +546,23 @@ def main() -> None:
 
     hook.register_handler(
         hook_state,
-        hook.Handler(
+        handler=hook.Handler(
             handle_key_pressing=functools.partial(
                 _handle_hook_key_pressing, app_state, keyboard_state, hook_state
             ),
             handle_key_releasing=functools.partial(
-                _handle_hook_key_releasing, keyboard_state, hook_state
+                _handle_hook_key_releasing, app_state, keyboard_state, hook_state
             ),
             handle_mouse_button_pressing=functools.partial(
                 _handle_hook_mouse_button_pressing,
+                app_state,
                 mouse_state,
                 hook_state,
                 gesture_state,
             ),
             handle_mouse_button_releasing=functools.partial(
                 _handle_hook_mouse_button_releasing,
+                app_state,
                 mouse_state,
                 hook_state,
                 gesture_state,
@@ -414,10 +571,11 @@ def main() -> None:
                 _handle_hook_mouse_cursor_moving, mouse_state, gesture_state
             ),
             handle_mouse_wheel_scrolling=functools.partial(
-                _handle_hook_mouse_wheel_scrolling
+                _handle_hook_mouse_wheel_scrolling, app_state, hook_state
             ),
             handle_trackpad_finger_positions_updating=functools.partial(
                 _handle_hook_trackpad_finger_positions_updating,
+                hook_state,
                 trackpad_state,
                 gesture_state,
             ),
@@ -444,7 +602,7 @@ def main() -> None:
         hook.process(hook_state)
         gui.process(gui_state)
 
-        MAX_RUN_DURATION_SECONDS = 30
+        MAX_RUN_DURATION_SECONDS = 60 << 30
         if time.time() - app_state.running_start_time >= MAX_RUN_DURATION_SECONDS:
             _stop_running_app(app_state)
 

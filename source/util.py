@@ -1,3 +1,5 @@
+# spell-checker: ignore
+
 import datetime
 import os
 import signal
@@ -56,6 +58,6 @@ def ensure_single_instance(
     terminate_running_instance_if_exists()
 
     with open(LOCK_PATH, "w") as lock:
-        lock.writelines([str(os.getpid())])
+        lock.writelines([str(os.getpid())])  # spell-checker: disable-line
 
     signal.signal(signal.SIGTERM, lambda *args: handle_new_instance_started())

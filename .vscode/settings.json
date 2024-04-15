@@ -1,14 +1,6 @@
 {
-  "cSpell.words": [
-    "Exposé",
-    "getpid",
-    "PoUIrup",
-    "SIGTERM",
-    "STATUSITEM",
-    "the-chenergy",
-    "trackpad"
-  ],
+  "cSpell.words": ["PoUIrup", "the-chenergy", "trackpad"],
   "code-runner.executorMapByGlob": {
-    "*.py": "conda activate pouirup && python -u $workspaceRoot/source/main.py 2>&1 | tee $workspaceRoot/playground/log_out_err.txt &"
+    "*.py": "conda activate pouirup && python -u $workspaceRoot/source/main.py | tee -a $workspaceRoot/playground/log_out.txt |& tee $workspaceRoot/playground/log_out_err.txt &"
   }
 }

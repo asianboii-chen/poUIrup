@@ -1,6 +1,7 @@
 import dataclasses
 import typing
 
+
 ShouldSuppressEventFlag = bool
 KeyId = typing.Literal[
     "a",
@@ -151,7 +152,7 @@ class MouseButtonEventCallback(typing.Protocol):
 
 
 class MouseCursorMovingCallback(typing.Protocol):
-    def __call__(self, new_position: CursorPositionPixels, /) -> None: ...
+    def __call__(self, new_position: CursorPositionPixels, /) -> typing.Any: ...
 
 
 class MouseWheelScrollingCallback(typing.Protocol):
@@ -167,7 +168,7 @@ class MouseWheelScrollingCallback(typing.Protocol):
 class TrackpadFingerPositionsUpdatingCallback(typing.Protocol):
     def __call__(
         self, finger_positions: dict[FingerId, FingerPositionInches], /
-    ) -> None: ...
+    ) -> typing.Any: ...
 
 
 @dataclasses.dataclass

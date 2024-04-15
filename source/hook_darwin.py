@@ -152,7 +152,7 @@ _MODIFIER_NATIVE_FLAG_MASKS: dict[KeyId, int] = {
 
 SUPPORTED_MODIFIERS = set(_MODIFIER_NATIVE_FLAG_MASKS)
 
-_MODIFIER_BY_OPTIONALLY_PAIRED_KEY: dict[KeyId, KeyId] = (
+MODIFIER_BY_OPTIONALLY_PAIRED_KEY: dict[KeyId, KeyId] = (
     {modifier: modifier for modifier in SUPPORTED_MODIFIERS}
 ) | {
     "right_control": "control",
@@ -321,15 +321,20 @@ def _handle_native_event(
     event: Quartz.CGEventRef,
     user_data: None,
 ) -> Quartz.CGEventRef:
-    if event_type != Quartz.NSEventTypeFlagsChanged:
-        Quartz.CGEventSetFlags(event, state.unsuppressed_flags)
-
     if event_type == Quartz.kCGEventTapDisabledByUserInput:
         return event
 
     if event_type == Quartz.kCGEventTapDisabledByTimeout:
         Quartz.CGEventTapEnable(state.event_tap, True)
         return event
+
+    source_pid = Quartz.CGEventGetIntegerValueField(
+        event, Quartz.kCGEventSourceUnixProcessID
+    )
+    is_emulated = source_pid != 0
+
+    if event_type != Quartz.NSEventTypeFlagsChanged and not is_emulated:
+        Quartz.CGEventSetFlags(event, state.unsuppressed_flags)
 
     if event_type == Quartz.NSEventTypeSystemDefined:
         ns_event = Quartz.NSEvent.eventWithCGEvent_(event)
@@ -454,7 +459,7 @@ def _handle_native_event(
         state.unsuppressed_flags = curr_flags
 
         code, key = _get_key_from_event(event)
-        if key is None:
+        if key is None or key not in MODIFIER_BY_OPTIONALLY_PAIRED_KEY:
             util.log_error(
                 f"Received flag-change event associated with key code {code} with new flags {bin(curr_flags)}, handling which is not yet supported."
             )
@@ -470,7 +475,7 @@ def _handle_native_event(
             # BUG Returning None does not suppress the LED on the physical Caps Lock key from changing its state, meaning that the LED will get out-of-sync with Caps Lock's activation status.
             return None
 
-        modifier = _MODIFIER_BY_OPTIONALLY_PAIRED_KEY[key]
+        modifier = MODIFIER_BY_OPTIONALLY_PAIRED_KEY[key]
         flag_mask = _MODIFIER_NATIVE_FLAG_MASKS[modifier]
         is_press = (curr_flags & flag_mask) != 0
 
@@ -559,7 +564,7 @@ def _handle_native_event(
         )
 
         should_suppress = handler.handle_mouse_wheel_scrolling(
-            dx - 1j * dy, is_continuous, is_done_by_momentum
+            -dx - 1j * dy, is_continuous, is_done_by_momentum
         )
         return None if should_suppress else event
 
@@ -586,8 +591,11 @@ def _handle_native_event(
         return event
 
     if event_type == Quartz.NSEventTypeMagnify:
+        # spell-checker: ignore Exposé
         # HACK Apparently this is what Mission Control and App Exposé internally listen to. Suppress to disable those default behaviors as we'll probably implement mouse gestures to handle them anyway. I haven't found any side effects for doing this yet--luckily pinching and double-tapping zoom features still work just fine with this forced suppression.
-        return None
+        # return None
+        # FIXME (hack on top of hack) To allow tracking gestures made with trackpad, let's let pass this event for now, at least until we actually assign and implement the gesture actions. (We could even keep this the official behavior that native gestures won't be suppressed quietly, so that the user must disable Mission Control and App Exposé in System Settings to use the custom gestures, which is arguably also reasonable.)
+        return event
 
     if event_type in _NS_EVENT_TYPE_CONSTANT_NAMES:
         util.log_error(
@@ -620,12 +628,8 @@ def create() -> State:
 
 
 def register_handler(state: State, handler: Handler) -> None:
-    # TODO Find out what the noticeable differences are between the following two tap locations and which one works better.
-    tap_location = Quartz.kCGSessionEventTap
-    # tap_location = Quartz.kCGHIDEventTap  # spell-checker: disable-line
-
     state.event_tap = Quartz.CGEventTapCreate(
-        tap_location,
+        Quartz.kCGAnnotatedSessionEventTap,
         Quartz.kCGHeadInsertEventTap,
         Quartz.kCGEventTapOptionDefault,
         Quartz.kCGEventMaskForAllEvents,
@@ -686,17 +690,12 @@ def process(state: State) -> None:
 def check_is_modifier_active(
     state: State, modifier_or_optionally_paired_key: KeyId
 ) -> bool:
-    modifier = _MODIFIER_BY_OPTIONALLY_PAIRED_KEY[modifier_or_optionally_paired_key]
+    modifier = MODIFIER_BY_OPTIONALLY_PAIRED_KEY[modifier_or_optionally_paired_key]
     return (state.unsuppressed_flags & _MODIFIER_NATIVE_FLAG_MASKS[modifier]) != 0
 
 
-def get_cursor_position() -> CursorPositionPixels:
-    source = None
-    return _get_cursor_position_from_event(Quartz.CGEventCreate(source))
-
-
 def _send_event(event: Quartz.CGEventRef) -> None:
-    Quartz.CGEventPost(Quartz.kCGSessionEventTap, event)
+    Quartz.CGEventPost(Quartz.kCGAnnotatedSessionEventTap, event)
 
 
 def _send_flags_changed_event(state: State, associated_key: KeyId) -> None:
@@ -849,3 +848,32 @@ def emulate_mouse_button_press(state: State, button: ButtonId) -> None:
 
 def emulate_mouse_button_release(state: State, button: ButtonId) -> None:
     _send_mouse_button_event(state, button, is_press=False)
+
+
+def get_cursor_position() -> CursorPositionPixels:
+    source = None
+    return _get_cursor_position_from_event(Quartz.CGEventCreate(source))
+
+
+@dataclasses.dataclass
+class WindowInfo:
+    title: str | None
+    owner_app_name: str
+
+
+def get_active_window_info() -> WindowInfo:
+    app = (
+        Quartz.NSWorkspace.sharedWorkspace().frontmostApplication()  # spell-checker: disable-line
+    )
+    pid = app.processIdentifier()
+    windows = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
+    )
+    title = None
+    for window in windows:
+        if window[Quartz.kCGWindowOwnerPID] == pid:
+            # TODO Getting the window's title requires the Screen Recording permissions or otherwise the "kCGWindowName" never exists. Find a way to verify that this permission is enabled in System Settings and, if not, prompt the user to enable it so that they don't unknowingly get hit with `None` titles all the time.
+            title = window.get(Quartz.kCGWindowName, None)
+            break
+
+    return WindowInfo(title, app.localizedName())
