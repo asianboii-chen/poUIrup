@@ -556,6 +556,11 @@ def _handle_native_event(
         if dx == 0 and dy == 0:
             return event
 
+        ns_event = Quartz.NSEvent.eventWithCGEvent_(event)
+        if not ns_event.isDirectionInvertedFromDevice():
+            dx *= -1
+            dy *= -1
+
         is_continuous = (
             Quartz.CGEventGetIntegerValueField(
                 event, Quartz.kCGScrollWheelEventIsContinuous
@@ -564,7 +569,7 @@ def _handle_native_event(
         )
 
         should_suppress = handler.handle_mouse_wheel_scrolling(
-            -dx - 1j * dy, is_continuous, is_done_by_momentum
+            dx + 1j * dy, is_continuous, is_done_by_momentum
         )
         return None if should_suppress else event
 
