@@ -273,7 +273,7 @@ def _get_cursor_position_from_event(
 
 def _update_click_level_state_with_new_mouse_button_event(
     click_level_state: ClickLevelState,
-    event_target_button: ButtonId,
+    event_target_button: ButtonId | None,
     is_press_event: bool,
 ) -> int:
     curr_time = time.time()
@@ -533,6 +533,9 @@ def _handle_native_event(
         Quartz.NSEventTypeLeftMouseDragged,
         Quartz.NSEventTypeRightMouseDragged,
     }:
+        _update_click_level_state_with_new_mouse_button_event(
+            state.click_level_state, event_target_button=None, is_press_event=False
+        )
         pos = _get_cursor_position_from_event(event)
         handler.handle_mouse_cursor_moving(pos)
         return event
