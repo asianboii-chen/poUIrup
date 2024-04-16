@@ -864,6 +864,7 @@ def get_cursor_position() -> CursorPositionPixels:
 class WindowInfo:
     title: str | None
     owner_app_name: str
+    owner_pid: int
 
 
 def get_active_window_info() -> WindowInfo:
@@ -881,4 +882,4 @@ def get_active_window_info() -> WindowInfo:
             title = window.get(Quartz.kCGWindowName, None)
             break
 
-    return WindowInfo(title, app.localizedName())
+    return WindowInfo(title, app.localizedName(), pid)
