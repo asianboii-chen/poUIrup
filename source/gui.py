@@ -85,11 +85,3 @@ def register_handler(state: State, handler: Handler) -> None:
 
 def process(state: State) -> None:
     state.app.Yield(onlyIfNeeded=True)
-
-
-def request_show_indicator(state: State) -> None:
-    wx.CallAfter(state.indicator.Show)
-
-
-def request_hide_indicator(state: State) -> None:
-    wx.CallAfter(state.indicator.Hide)
