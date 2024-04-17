@@ -149,17 +149,30 @@ _MODIFIER_NATIVE_FLAG_MASKS: dict[KeyId, int] = {
     "function": Quartz.kCGEventFlagMaskSecondaryFn,
 }
 
+SUPPORTED_MODIFIERS = set(_MODIFIER_NATIVE_FLAG_MASKS.keys())
 
-SUPPORTED_MODIFIERS = set(_MODIFIER_NATIVE_FLAG_MASKS)
+_ALIASED_KEYS_BY_MODIFIER: dict[KeyId, set[KeyId]] = {
+    "shift": {"shift", "right_shift"},
+    "control": {"control", "right_control"},
+    "option": {"option", "right_option"},
+    "command": {"command", "right_command"},
+}
 
-MODIFIER_BY_OPTIONALLY_PAIRED_KEY: dict[KeyId, KeyId] = (
-    {modifier: modifier for modifier in SUPPORTED_MODIFIERS}
-) | {
-    "right_control": "control",
-    "right_option": "option",
-    "right_command": "command",
-    "right_shift": "shift",
-}  # type: ignore
+_MODIFIER_BY_OPTIONALLY_ALIASED_KEY: dict[KeyId, KeyId] = {
+    key: modifier
+    for modifier in SUPPORTED_MODIFIERS
+    for key in _ALIASED_KEYS_BY_MODIFIER.get(modifier, {modifier})
+}
+
+
+def check_is_key_modifier(key: KeyId) -> bool:
+    return key in _MODIFIER_BY_OPTIONALLY_ALIASED_KEY
+
+
+def get_aliased_keys_for_modifier(modifier: KeyId) -> set[KeyId]:
+    assert modifier in SUPPORTED_MODIFIERS
+    return _ALIASED_KEYS_BY_MODIFIER.get(modifier, {modifier})
+
 
 _MEDIA_KEY_NX_KEY_TYPES: dict[KeyId, int] = {
     "volume_up": 0,
@@ -237,7 +250,10 @@ class State:
     event_tap: Quartz.NSMachPort | None
 
     # macOS natively remembers its modifier state, regardless of whether the modifiers' key press events (sent by the system with type NSEventTypeFlagsChanged) were suppressed. This field remembers which flags are actually unsuppressed, meaning they're active from the user's perspective after knowing which key events they suppressed or emulated.
+    native_flags: int
     unsuppressed_flags: int
+
+    pressed_keys: set[KeyId]
 
     is_caps_lock_natively_pressed: bool
     was_caps_lock_native_press_suppressed: bool
@@ -373,6 +389,11 @@ def _handle_native_event(
                 state, "caps_lock", is_press
             )
 
+            if is_press:
+                state.pressed_keys.add("caps_lock")
+            else:
+                state.pressed_keys.discard("caps_lock")
+
             return event
 
         if event_subtype == 8:
@@ -400,9 +421,12 @@ def _handle_native_event(
             if should_suppress:
                 return None
 
-            _terminate_auto_repeat_by_new_keyboard_event_if_needed(
-                state, "caps_lock", is_press
-            )
+            _terminate_auto_repeat_by_new_keyboard_event_if_needed(state, key, is_press)
+
+            if is_press:
+                state.pressed_keys.add(key)
+            else:
+                state.pressed_keys.discard(key)
 
             return event
 
@@ -432,6 +456,7 @@ def _handle_native_event(
         _terminate_auto_repeat_by_new_keyboard_event_if_needed(
             state, key, is_press_event=True
         )
+        state.pressed_keys.add(key)
 
         return event
 
@@ -450,20 +475,27 @@ def _handle_native_event(
         _terminate_auto_repeat_by_new_keyboard_event_if_needed(
             state, key, is_press_event=False
         )
+        state.pressed_keys.discard(key)
 
         return event
 
     if event_type == Quartz.NSEventTypeFlagsChanged:
-        curr_flags: int = Quartz.CGEventGetFlags(event)
-        prev_flags = state.unsuppressed_flags
-        state.unsuppressed_flags = curr_flags
+        curr_native_flags: int = Quartz.CGEventGetFlags(event)
+        prev_native_flags = state.native_flags
+        state.native_flags = curr_native_flags
 
         code, key = _get_key_from_event(event)
-        if key is None or key not in MODIFIER_BY_OPTIONALLY_PAIRED_KEY:
+        if key is None or not check_is_key_modifier(key):
             util.log_error(
-                f"Received flag-change event associated with key code {code} with new flags {bin(curr_flags)}, handling which is not yet supported."
+                f"Received flag-change event associated with key code {code} with new flags {bin(curr_native_flags)}, handling which is not yet supported."
             )
             return event
+
+        prev_flags = state.unsuppressed_flags
+        modifier = _MODIFIER_BY_OPTIONALLY_ALIASED_KEY[key]
+        flag_mask = _MODIFIER_NATIVE_FLAG_MASKS[modifier]
+        curr_flags = (prev_flags & ~flag_mask) | (curr_native_flags & flag_mask)
+        state.unsuppressed_flags = curr_flags
 
         if key == "caps_lock":
             # The Caps Lock events are handled by certain NSEventTypeSystemDefined-events, where the equivalent press event happens more immediately.
@@ -472,13 +504,11 @@ def _handle_native_event(
                 return event
 
             state.unsuppressed_flags = prev_flags
+
             # BUG Returning None does not suppress the LED on the physical Caps Lock key from changing its state, meaning that the LED will get out-of-sync with Caps Lock's activation status.
             return None
 
-        modifier = MODIFIER_BY_OPTIONALLY_PAIRED_KEY[key]
-        flag_mask = _MODIFIER_NATIVE_FLAG_MASKS[modifier]
-        is_press = (curr_flags & flag_mask) != 0
-
+        is_press = curr_native_flags > prev_native_flags
         if is_press:
             should_suppress = handler.handle_key_pressing(key, False)
         else:
@@ -619,7 +649,9 @@ def create() -> State:
     return State(
         is_active=False,
         event_tap=None,
+        native_flags=0,
         unsuppressed_flags=0,
+        pressed_keys=set(),
         is_caps_lock_natively_pressed=False,
         was_caps_lock_native_press_suppressed=False,
         auto_repeat_state=AutoRepeatState(
@@ -654,9 +686,11 @@ def activate(state: State) -> None:
         return
     state.is_active = True
 
-    state.unsuppressed_flags = Quartz.CGEventSourceFlagsState(
+    state.native_flags = Quartz.CGEventSourceFlagsState(
         Quartz.kCGEventSourceStateHIDSystemState
     )
+    state.unsuppressed_flags = state.native_flags
+
     Quartz.CGEventTapEnable(state.event_tap, True)
 
 
@@ -698,7 +732,7 @@ def process(state: State) -> None:
 def check_is_modifier_active(
     state: State, modifier_or_optionally_paired_key: KeyId
 ) -> bool:
-    modifier = MODIFIER_BY_OPTIONALLY_PAIRED_KEY[modifier_or_optionally_paired_key]
+    modifier = _MODIFIER_BY_OPTIONALLY_ALIASED_KEY[modifier_or_optionally_paired_key]
     return (state.unsuppressed_flags & _MODIFIER_NATIVE_FLAG_MASKS[modifier]) != 0
 
 
@@ -765,6 +799,7 @@ def emulate_key_press(
         and state.auto_repeat_state.has_started_repeating
     ):
         should_emulate_native_repeat = True
+    state.pressed_keys.add(key)
 
     if key == "caps_lock":
         state.unsuppressed_flags ^= _MODIFIER_NATIVE_FLAG_MASKS[key]
@@ -772,7 +807,7 @@ def emulate_key_press(
         _send_flags_changed_event(state, key)
         return
 
-    if key in SUPPORTED_MODIFIERS:
+    if check_is_key_modifier(key):
         state.unsuppressed_flags |= _MODIFIER_NATIVE_FLAG_MASKS[key]
         _send_flags_changed_event(state, key)
         return
@@ -803,13 +838,23 @@ def emulate_key_release(state: State, key: KeyId) -> None:
         state, key, is_press_event=False
     )
 
+    state.pressed_keys.discard(key)
+
     if key == "caps_lock":
         # Caps Lock only induces one flag change event natively anyway.
         return
 
     if key in SUPPORTED_MODIFIERS:
-        state.unsuppressed_flags &= ~_MODIFIER_NATIVE_FLAG_MASKS[key]
-        _send_flags_changed_event(state, key)
+        should_reset_flag = True
+        modifier = _MODIFIER_BY_OPTIONALLY_ALIASED_KEY[key]
+        for alias in get_aliased_keys_for_modifier(modifier):
+            if alias != key and alias in state.pressed_keys:
+                should_reset_flag = False
+
+        if should_reset_flag:
+            state.unsuppressed_flags &= ~_MODIFIER_NATIVE_FLAG_MASKS[key]
+            _send_flags_changed_event(state, key)
+
         return
 
     if key in _MEDIA_KEY_NX_KEY_TYPES:

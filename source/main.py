@@ -146,7 +146,7 @@ def _handle_hook_key_pressing(
 ) -> hook.ShouldSuppressEventFlag:
     if (
         key not in tracker_state.pressed_keys_and_buttons
-        and key not in hook.MODIFIER_BY_OPTIONALLY_PAIRED_KEY
+        and not hook.check_is_key_modifier(key)
     ):
         _detect_and_log_window_change_if_needed(tracker_state)
         _log_event_trace(
